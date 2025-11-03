@@ -6,52 +6,6 @@ function logError(request, message) {
   );
 }
 
-/**
- * 判断是否为 GitHub API 路径
- * @param pathname 请求路径
- * @returns {boolean}
- */
-function isGitHubAPIPath(pathname) {
-  // GitHub API 的典型路径模式
-  const apiPaths = [
-    '/repos/',
-    '/user',
-    '/users/',
-    '/orgs/',
-    '/organizations/',
-    '/gists/',
-    '/search/',
-    '/rate_limit',
-    '/emojis',
-    '/events',
-    '/feeds',
-    '/notifications',
-    '/meta',
-    '/octocat',
-    '/zen',
-    '/marketplace_listing/',
-    '/installation/',
-    '/app/',
-    '/applications/',
-  ];
-  
-  return apiPaths.some(path => pathname.startsWith(path));
-}
-
-/**
- * 获取 GitHub 代理目标主机
- * @param baseHostname 基础主机名（如 github.com）
- * @param pathname 请求路径
- * @returns {string}
- */
-function getGitHubProxyHost(baseHostname, pathname) {
-  // 如果配置的是 github.com，根据路径智能判断
-  if (baseHostname === 'github.com' && isGitHubAPIPath(pathname)) {
-    return 'api.github.com';
-  }
-  return baseHostname;
-}
-
 function createNewRequest(request, url, proxyHostname, originHostname) {
   const newRequestHeaders = new Headers(request.headers);
   for (const [key, value] of newRequestHeaders) {
@@ -65,19 +19,6 @@ function createNewRequest(request, url, proxyHostname, originHostname) {
       );
     }
   }
-  
-  // 为 GitHub API 添加必要的请求头
-  if (proxyHostname === 'api.github.com') {
-    // GitHub API 要求必须有 User-Agent
-    if (!newRequestHeaders.has('user-agent')) {
-      newRequestHeaders.set('user-agent', 'Cloudflare-Workers-Proxy');
-    }
-    // 设置 GitHub API 推荐的 Accept 头
-    if (!newRequestHeaders.has('accept')) {
-      newRequestHeaders.set('accept', 'application/vnd.github+json');
-    }
-  }
-  
   return new Request(url.toString(), {
     method: request.method,
     headers: newRequestHeaders,
@@ -102,6 +43,7 @@ function setResponseHeaders(
           originHostname
         )
       );
+
     }
   }
   if (DEBUG) {
@@ -116,42 +58,27 @@ function setResponseHeaders(
  * @param proxyHostname 代理地址 hostname
  * @param pathnameRegex 代理地址路径匹配的正则表达式
  * @param originHostname 替换的字符串
- * @param baseHostname 基础主机名（用于 GitHub 双域名替换）
  * @returns {Promise<*>}
  */
 async function replaceResponseText(
   originalResponse,
   proxyHostname,
   pathnameRegex,
-  originHostname,
-  baseHostname = null
+  originHostname
 ) {
   let text = await originalResponse.text();
-  
-  // 替换实际的代理主机名
   if (pathnameRegex) {
     pathnameRegex = pathnameRegex.replace(/^\^/, "");
-    text = text.replace(
+    return text.replace(
       new RegExp(`((?<!\\.)\\b${proxyHostname}\\b)(${pathnameRegex})`, "g"),
       `${originHostname}$2`
     );
   } else {
-    text = text.replace(
+    return text.replace(
       new RegExp(`(?<!\\.)\\b${proxyHostname}\\b`, "g"),
       originHostname
     );
   }
-  
-  // 如果是 GitHub 代理，还需要替换另一个域名
-  if (baseHostname === 'github.com') {
-    const otherHost = proxyHostname === 'api.github.com' ? 'github.com' : 'api.github.com';
-    text = text.replace(
-      new RegExp(`(?<!\\.)\\b${otherHost}\\b`, "g"),
-      originHostname
-    );
-  }
-  
-  return text;
 }
 
 async function nginx() {
@@ -185,8 +112,10 @@ export default {
     try {
       const {
         PROXY_HOSTNAME,
+        PROXY_HOSTNAME2,
         PROXY_PROTOCOL = "https",
         PATHNAME_REGEX,
+        PATHNAME_REGEX2,
         UA_WHITELIST_REGEX,
         UA_BLACKLIST_REGEX,
         URL302,
@@ -198,9 +127,9 @@ export default {
       } = env;
       const url = new URL(request.url);
       const originHostname = url.hostname;
+      
+      // 检查通用的黑白名单规则
       if (
-        !PROXY_HOSTNAME ||
-        (PATHNAME_REGEX && !new RegExp(PATHNAME_REGEX).test(url.pathname)) ||
         (UA_WHITELIST_REGEX &&
           !new RegExp(UA_WHITELIST_REGEX).test(
             request.headers.get("user-agent").toLowerCase()
@@ -235,34 +164,56 @@ export default {
               },
             });
       }
-      // 智能判断 GitHub 代理目标主机
-      const actualProxyHost = getGitHubProxyHost(PROXY_HOSTNAME, url.pathname);
       
-      url.host = actualProxyHost;
+      // 尝试匹配第一组配置
+      let proxyHostname = null;
+      let pathnameRegex = null;
+      
+      if (PROXY_HOSTNAME && (!PATHNAME_REGEX || new RegExp(PATHNAME_REGEX).test(url.pathname))) {
+        proxyHostname = PROXY_HOSTNAME;
+        pathnameRegex = PATHNAME_REGEX;
+      }
+      // 如果第一组没有匹配上,尝试第二组
+      else if (PROXY_HOSTNAME2 && (!PATHNAME_REGEX2 || new RegExp(PATHNAME_REGEX2).test(url.pathname))) {
+        proxyHostname = PROXY_HOSTNAME2;
+        pathnameRegex = PATHNAME_REGEX2;
+      }
+      
+      // 如果都没有匹配上,返回错误
+      if (!proxyHostname) {
+        logError(request, "Invalid");
+        return URL302
+          ? Response.redirect(URL302, 302)
+          : new Response(await nginx(), {
+              headers: {
+                "Content-Type": "text/html; charset=utf-8",
+              },
+            });
+      }
+      
+      url.host = proxyHostname;
       url.protocol = PROXY_PROTOCOL;
       const newRequest = createNewRequest(
         request,
         url,
-        actualProxyHost,
+        proxyHostname,
         originHostname
       );
       const originalResponse = await fetch(newRequest);
       const newResponseHeaders = setResponseHeaders(
         originalResponse,
-        actualProxyHost,
+        proxyHostname,
         originHostname,
         DEBUG
       );
       const contentType = newResponseHeaders.get("content-type") || "";
       let body;
-      // 处理文本类型和 JSON 类型的响应（GitHub API 返回 JSON）
-      if (contentType.includes("text/") || contentType.includes("application/json")) {
+      if (contentType.includes("text/")) {
         body = await replaceResponseText(
           originalResponse,
-          actualProxyHost,
-          PATHNAME_REGEX,
-          originHostname,
-          PROXY_HOSTNAME
+          proxyHostname,
+          pathnameRegex,
+          originHostname
         );
       } else {
         body = originalResponse.body;
@@ -277,3 +228,4 @@ export default {
     }
   },
 };
+
