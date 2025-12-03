@@ -6,6 +6,7 @@
 
 https://cf-workers-proxy-7eh.pages.dev/BaiFeng666/cf-workers-proxy
 
+https://cf-workers-proxy-7eh.pages.dev/repos/BaiFeng666/cf-workers-proxy
 
 <div align="center">
 
