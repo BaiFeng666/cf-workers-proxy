@@ -1,3 +1,12 @@
+# init
+
+<img width="841" height="403" alt="image" src="https://github.com/user-attachments/assets/740aab50-08ba-441b-abe9-dfee52b195d7" />
+
+# use
+
+https://cf-workers-proxy-7eh.pages.dev/BaiFeng666/cf-workers-proxy
+
+
 <div align="center">
 
 <h1 align="center">Cloudflare Workers Proxy</h1>
