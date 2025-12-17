@@ -8,6 +8,22 @@ https://cf-workers-proxy-7eh.pages.dev/BaiFeng666/cf-workers-proxy
 
 https://cf-workers-proxy-7eh.pages.dev/repos/BaiFeng666/cf-workers-proxy
 
+# 环境变量
+
+PATHNAME_REGEX
+^/BaiFeng666/
+
+PATHNAME_REGEX2
+^/repos/BaiFeng666/
+
+PROXY_HOSTNAME
+github.com
+
+PROXY_HOSTNAME2
+api.github.com
+
+
+
 <div align="center">
 
 <h1 align="center">Cloudflare Workers Proxy</h1>
